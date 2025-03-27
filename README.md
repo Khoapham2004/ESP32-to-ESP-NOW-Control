@@ -1,1 +1,2 @@
 # ESP32-to-ESP-NOW-Control
+This project uses ESP-NOW communication between two ESP32 boards to control both a steering system and a motor. The sender reads input from a potentiometer (or joystick) and transmits the data wirelessly. The receiver processes the signals to adjust a servo motor for steering and control the speed and direction of a DC motor. The system ensures precise control by mapping the input values to appropriate ranges, with calibration adjustments for accurate steering and smooth motor operation.
