@@ -7,4 +7,4 @@ If you want to learn more details, please watch the video.
   NOTE: Because when WiFi is enabled, only ADC1 can be used, so I cut the Lx wire from the joystick and re-soldered it to the output pin of the potentiometer on pin 32.
 ![image](https://github.com/user-attachments/assets/0818fe40-f2fa-4d9c-9451-d4ba80c9d39a)
 
-
+For the pre-built setups, I also integrated an autonomous vehicle with image processing using Python into the project.You can see the results in the video Autodriving-pythone.mp4, which also uses a Raspberry Pi.
