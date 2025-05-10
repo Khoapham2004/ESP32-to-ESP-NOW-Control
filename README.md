@@ -3,4 +3,7 @@ This project uses ESP-NOW communication between two ESP32 boards to control both
 If you want to learn more details, please watch the video.
 ![image](https://github.com/user-attachments/assets/0a1d6194-2771-4c25-b33d-186e1e498fee)
 ![image](https://github.com/user-attachments/assets/92148175-3752-4fdd-90a6-3b1cfa5a3070)
+NOTE: Because when WiFi is enabled, only ADC1 can be used, so I cut the Lx wire from the joystick and re-soldered it to the output pin of the potentiometer on pin 32.
+![image](https://github.com/user-attachments/assets/0818fe40-f2fa-4d9c-9451-d4ba80c9d39a)
+
 
