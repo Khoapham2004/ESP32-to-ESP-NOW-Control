@@ -2,26 +2,22 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <ESP32Servo.h>
-#include <Adafruit_NeoPixel.h>
 
 //  Cấu hình chân
 const int steeringPin = 15;  // Chân điều khiển servo
 const int RPWM = 12;         // Điều hướng motor phải
 const int LPWM = 13;         // Điều hướng motor trái
 const int EN_PIN = 2;        // Kích hoạt motor (R_EN & L_EN)
-const int RGB_Front = 5;
-const int RGB_Back = 18;
-#define NUM_LEDS 8
-bool headlightState = false;  // Mặc định tắt
+const int turnSignalPin = 5;  // Chân đèn báo rẽ
+bool turnSignalState = false;
+unsigned long previousMillis = 0;
+const int blinkInterval = 500; // Nhấp nháy 2 lần mỗi giây (1000ms / 2Hz = 500ms)
 
-Adafruit_NeoPixel strip1(NUM_LEDS, RGB_Front, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel strip2(NUM_LEDS, RGB_Back, NEO_GRB + NEO_KHZ800);
 
 //  Cấu hình PWM
 const int MotorPWMFreq = 1000;  // Tần số PWM cho motor
 const int ServoPWMFreq = 50;    // Tần số PWM cho servo
 const int PWMResolution = 8;    // 8-bit PWM (0-255)
-
 //  Timeout nếu mất tín hiệu
 #define SIGNAL_TIMEOUT 1000  
 unsigned long lastRecvTime = 0;
@@ -55,20 +51,6 @@ void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
       controlMotor();
       lastRecvTime = millis();
 
-      // Chuyển trạng thái đèn pha khi nhấn b6
-      static bool lastB6State = false;
-      if (receiverData.b6 && !lastB6State) {  // Chỉ kích hoạt khi b6 chuyển từ 0 -> 1
-        headlightState = !headlightState; // Đảo trạng thái
-        Serial.print("Headlights: "); Serial.println(headlightState ? "ON" : "OFF");
-        turnOnHeadlight(headlightState);
-      }
-      lastB6State = receiverData.b6;
-
-      // Xi-nhan trái (B5)
-      turnSignalLeft(receiverData.b5);
-
-      // Xi-nhan phải (B4)
-      turnSignalRight(receiverData.b4);
     } else {
       Serial.println("⚠️ Dữ liệu không hợp lệ! (Sai header/footer)");
     }
@@ -78,47 +60,19 @@ void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
 }
 
 
-void turnOnHeadlight(bool state) {
-  if (state) {
-    allWhite(strip1);  // Bật đèn trước
-    allWhite(strip2);  // Bật đèn sau
-  } else {
-    strip1.clear();  // Tắt đèn trước
-    strip2.clear();  // Tắt đèn sau
-    strip1.show();
-    strip2.show();
-  }
-}
-
 void turnSignalLeft(bool state) {
-  if (state) {
-    turnSignal(strip1);  // Xi-nhan trái (trước)
-    turnSignal(strip2);  // Xi-nhan trái (sau)
-  } else {
-    strip1.clear();
-    strip2.clear();
-    strip1.show();
-    strip2.show();
-  }
+ 
 }
 
 void turnSignalRight(bool state) {
-  if (state) {
-    turnSignal(strip1);  // Xi-nhan phải (trước)
-    turnSignal(strip2);  // Xi-nhan phải (sau)
-  } else {
-    strip1.clear();
-    strip2.clear();
-    strip1.show();
-    strip2.show();
-  }
+ 
 }
 
 
 // Điều khiển motor BTS7960
 void controlMotor() {
   int motorSpeed = map(receiverData.ly, 0, 254, -255, 255);
-  int pwmSpeed = map(receiverData.pot, 254, 0, 0, 255);
+  int pwmSpeed = map(receiverData.pot, 0, 254, 0, 255);
   int steering = map(constrain(receiverData.rx + (127 - 112), 0, 254), 0, 254, -10, 180);
 
   Serial.print("Pot: "); Serial.print(receiverData.pot);
@@ -149,8 +103,8 @@ void goAhead(int MotorSpeed) {
 //  Chạy lùi
 void goBack(int MotorSpeed) {
   digitalWrite(EN_PIN, HIGH);    // Kích hoạt motor
-  ledcWrite(RPWM, 100);            // Đặt tiến về 0
-  ledcWrite(LPWM, 255);   // PWM cho lùi
+  ledcWrite(RPWM, 0);            // Đặt tiến về 0
+  ledcWrite(LPWM, MotorSpeed);   // PWM cho lùi
 }
 
 //  Dừng motor
@@ -159,17 +113,16 @@ void stopMotor() {
   ledcWrite(RPWM, 0);
   ledcWrite(LPWM, 0);
 }
+void brakeMoter(){
+  digitalWrite(EN_PIN, LOW);
+  ledcWrite(RPWM, 0);
+  ledcWrite(LPWM, 0);
+}
 
 // Điều khiển góc servo (0 - 180 độ)
 void setServoAngle(int angle) {
   int duty = map(angle, 0, 180, 1638, 8192); // Map servo PWM (16-bit)
   ledcWrite(steeringPin, duty); // Ghi trực tiếp vào chân steeringPin
-}
-void allWhite(Adafruit_NeoPixel &strip) {
-    for (int i = 0; i < NUM_LEDS; i++) {
-        strip.setPixelColor(i, strip.Color(255, 255, 255));  
-    }
-    strip.show();
 }
 // 🛠 Thiết lập chân & PWM
 void setUpPinModes() {
@@ -185,37 +138,20 @@ void setUpPinModes() {
   // Đưa servo về giữa khi khởi động
   setServoAngle(90);
 }
-void turnSignal(Adafruit_NeoPixel &strip) {
-    for (int i = 0; i < NUM_LEDS; i++) {
-        strip.setPixelColor(i, strip.Color(255, 255, 0));  // Màu vàng (255,255,0)
-        strip.show();
-        delay(100);
-    }
-    delay(200);  // Giữ sáng một chút
-    strip.clear();  
-    strip.show();
-    delay(200);
-}
 
 void setup() {
   Serial.begin(115200);
-  setUpPinModes();
-  strip1.begin();  
-  strip2.begin();  
-  strip1.setBrightness(255);  // Độ sáng tối đa
-  strip2.setBrightness(255);  
-  strip1.show();  
-  strip2.show();  
+  setUpPinModes();  
   
   WiFi.mode(WIFI_STA);
   //esp_wifi_set_max_tx_power(78);  // Giá trị 78 tương đương ~20.5 dBm
   WiFi.setSleep(false);  // Tắt tiết kiệm năng lượng WiFi
-  esp_wifi_set_max_tx_power(84);  // Công suất phát WiFi tối đa
-  setCpuFrequencyMhz(240);  // Chạy CPU ở tốc độ cao nhất
+  esp_wifi_set_max_tx_power(74);  // Công suất phát WiFi tối đa
+  setCpuFrequencyMhz(200);  // Chạy CPU ở tốc độ cao nhất
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     return;
-  }
+  }                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
   esp_now_set_wake_window(65535);  // Giữ ESP-NOW luôn hoạt động
   //esp_now_set_peer_rate(WIFI_PHY_RATE_54M);  // Tốc độ truyền cao nhất
   esp_now_register_recv_cb(OnDataRecv);
