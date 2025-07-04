@@ -286,7 +286,7 @@ void loop() {
   // ===== Kiểm tra vật cản =====
   bool objectDetected = false;
   for (int i = 0; i < 4; i++) {
-    if (distance[i] > 0 && distance[i] < 30) {
+    if (distance[i] > 0 && distance[i] < 40) {
       objectDetected = true;
       break;
     }
