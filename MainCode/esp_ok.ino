@@ -19,7 +19,7 @@ int filter_index = 0;
 
 // ======== PID ========
 double input, output, setpoint = 0;
-double Kp = 2.0, Ki = 0.1, Kd = 1;
+double Kp = 2.0, Ki = 0.5, Kd = 0.5;
 PID myPID(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
 // ======== Yaw PID ========
@@ -99,7 +99,7 @@ void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
       if (receiverData.b6 && !isSensorMode) {
         isSensorMode = true;
         angleZ = 0; // reset yaw về 0
-        Kp = 2.0, Ki = 0.5, Kd = 0.8;
+        Kp = 2.0, Ki = 0.5, Kd = 0.5;
         yawKp = 2.0, yawKi = 0.3, yawKd = 0.2;
         Serial.println("Chế độ cảm biến BẬT - Cập nhật angleZ = 0");
         delay(100);
@@ -107,9 +107,6 @@ void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
 
       if (receiverData.b5 && isSensorMode) {
         isSensorMode = false;
-        angleZ = 0; // reset yaw về 0
-        Kp = 2.0, Ki = 0.5, Kd = 0.8;
-        yawKp = 2.0, yawKi = 0.3, yawKd = 0.2;
         Serial.println("Chế độ cảm biến TẮT");
         delay(100);
       }
@@ -286,53 +283,55 @@ void loop() {
   readUltrasonicSensors();
   int pwmSpeed = map(receiverData.pot, 0, 254, 0, 255);
 
+  // ===== Kiểm tra vật cản =====
   bool objectDetected = false;
   for (int i = 0; i < 4; i++) {
-    if (distance[i] > 0 && distance[i] < 40) {
+    if (distance[i] > 0 && distance[i] < 30) {
       objectDetected = true;
       break;
     }
   }
 
-if (!objectDetected) {
-  if (!isPathClear) {
-    sensorClearStart = millis();
-    isPathClear = true;
-  } else if (millis() - sensorClearStart >= 500) {
-    adjustSteeringByYaw(); // Tính PID hồi vị
-    int correctedAngle = constrain(90 + yawDirection * yawOutput, 50, 130);
-    setServoAngle(correctedAngle);
+  if (!objectDetected) {
+    // ======= Không có vật cản - chỉ PID MPU =======
+    if (!isPathClear) {
+      sensorClearStart = millis();
+      isPathClear = true;
+    } else if (millis() - sensorClearStart >= 500) {
+      adjustSteeringByYaw(); // Tính PID hồi vị
+      int correctedAngle = constrain(90 + yawDirection * yawOutput, 50, 130);
+      setServoAngle(correctedAngle);
+      Serial.print("[MPU PID] angleZ: "); Serial.print(angleZ);
+      Serial.print(" | yawOutput: "); Serial.println(yawOutput);
+      goAhead(pwmSpeed);
+      return;
+    }
+  } else {
+    // ======= Có vật cản - chỉ PID Siêu âm =======
+    isPathClear = false;
+
+    float leftSum = 0; int leftCount = 0;
+    if (distance[2] > 0) { leftSum += distance[2]; leftCount++; }
+    if (distance[3] > 0) { leftSum += distance[3]; leftCount++; }
+    float leftAvg = (leftCount > 0) ? leftSum / leftCount : -1;
+
+    float rightSum = 0; int rightCount = 0;
+    if (distance[0] > 0) { rightSum += distance[0]; rightCount++; }
+    if (distance[1] > 0) { rightSum += distance[1]; rightCount++; }
+    float rightAvg = (rightCount > 0) ? rightSum / rightCount : -1;
+
+    if (leftAvg < 0 || rightAvg < 0) return;
+
+    input = rightAvg - leftAvg;
+    myPID.Compute();
+
+    int ultrasonicAngle = constrain(90 + output, 50, 130);
+    setServoAngle(ultrasonicAngle);
+    Serial.print("[Ultrasonic PID] input: "); Serial.print(input);
+    Serial.print(" | output: "); Serial.print(output);
+    Serial.print(" | ultrasonicAngle: "); Serial.println(ultrasonicAngle);
+
     goAhead(pwmSpeed);
-    return;
+    delay(50);
   }
-} else {
-  isPathClear = false;
-}
-
-
-  float leftSum = 0; int leftCount = 0;
-  if (distance[2] > 0) { leftSum += distance[2]; leftCount++; }
-  if (distance[3] > 0) { leftSum += distance[3]; leftCount++; }
-  float leftAvg = (leftCount > 0) ? leftSum / leftCount : -1;
-
-  float rightSum = 0; int rightCount = 0;
-  if (distance[0] > 0) { rightSum += distance[0]; rightCount++; }
-  if (distance[1] > 0) { rightSum += distance[1]; rightCount++; }
-  float rightAvg = (rightCount > 0) ? rightSum / rightCount : -1;
-
-  if (leftAvg < 0 || rightAvg < 0) return;
-  input = rightAvg - leftAvg;
-  myPID.Compute();
-
-  int combinedAngle = constrain(90 + output + yawDirection * yawOutput, 50, 130);
-  setServoAngle(combinedAngle);
-
-  Serial.print("[Combined PID] input: "); Serial.print(input);
-  Serial.print(" | output: "); Serial.print(output);
-  Serial.print(" | yawOutput: "); Serial.print(yawOutput);
-  Serial.print(" | combinedAngle: "); Serial.println(combinedAngle);
-
-  goAhead(pwmSpeed);
-  delay(50);
-
 }
