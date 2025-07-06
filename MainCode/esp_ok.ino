@@ -19,12 +19,12 @@ int filter_index = 0;
 
 // ======== PID ========
 double input, output, setpoint = 0;
-double Kp = 2.0, Ki = 0.5, Kd = 0.5;
+double Kp = 5.0, Ki = 0.2, Kd = 0.8;
 PID myPID(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
 // ======== Yaw PID ========
 double yawInput, yawOutput, yawSetpoint = 0;
-double yawKp = 2.0, yawKi = 0.3, yawKd = 0.2;
+double yawKp = 3, yawKi = 0.2, yawKd = 0.8;
 PID yawPID(&yawInput, &yawOutput, &yawSetpoint, yawKp, yawKi, yawKd, DIRECT);
 
 // ======== Pins ========
@@ -99,8 +99,6 @@ void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
       if (receiverData.b6 && !isSensorMode) {
         isSensorMode = true;
         angleZ = 0; // reset yaw về 0
-        Kp = 2.0, Ki = 0.5, Kd = 0.5;
-        yawKp = 2.0, yawKi = 0.3, yawKd = 0.2;
         Serial.println("Chế độ cảm biến BẬT - Cập nhật angleZ = 0");
         delay(100);
       }
@@ -109,6 +107,10 @@ void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
         isSensorMode = false;
         Serial.println("Chế độ cảm biến TẮT");
         delay(100);
+      }
+
+      if (receiverData.b3) {
+        angleZ = 0;
       }
     }
   }
@@ -157,9 +159,6 @@ void updateYaw() {
   angleZ = fmod(angleZ, 360.0);
   if (angleZ < 0) angleZ += 360;
 
-  Serial.print("[Yaw Update] angleZ: "); Serial.print(angleZ);
-  Serial.print(" | rateZ: "); Serial.print(filteredRateZ);
-  Serial.print(" | dt: "); Serial.println(dt);
 }
 
 void adjustSteeringByYaw() {
@@ -168,8 +167,14 @@ void adjustSteeringByYaw() {
   if (yawInput < -180) yawInput += 360;
 
   yawPID.Compute();
-  Serial.print("[Yaw PID] yawInput: "); Serial.print(yawInput);
-  Serial.print(" | yawOutput: "); Serial.println(yawOutput);
+}
+
+float smoothDistance(float current, float previous, float maxChange) {
+  float diff = current - previous;
+  if (fabs(diff) > maxChange) {
+    current = previous + (diff > 0 ? maxChange : -maxChange);
+  }
+  return current;
 }
 
 void readUltrasonicSensors() {
@@ -179,8 +184,13 @@ void readUltrasonicSensors() {
     digitalWrite(trigPins[i], HIGH);
     delayMicroseconds(10);
     digitalWrite(trigPins[i], LOW);
-    duration[i] = pulseIn(echoPins[i], HIGH, 30000);
-    distance[i] = (duration[i] == 0) ? -1 : duration[i] * 0.0343 / 2;
+
+    long duration = pulseIn(echoPins[i], HIGH, 30000);
+    float rawDistance = (duration == 0) ? -1 : duration * 0.0343 / 2;
+
+    if (rawDistance > 0) {
+      distance[i] = smoothDistance(rawDistance, distance[i], 5); // maxChange = 5 cm
+    }
   }
 }
 
@@ -270,6 +280,8 @@ void setup() {
   esp_now_register_recv_cb(OnDataRecv);
 }
 
+unsigned long lastPrintTime = 0;
+
 void loop() {
   if (millis() - lastRecvTime > SIGNAL_TIMEOUT) {
     setServoAngle(90);
@@ -286,7 +298,7 @@ void loop() {
   // ===== Kiểm tra vật cản =====
   bool objectDetected = false;
   for (int i = 0; i < 4; i++) {
-    if (distance[i] > 0 && distance[i] < 40) {
+    if (distance[i] > 0 && distance[i] < 30) {
       objectDetected = true;
       break;
     }
@@ -298,15 +310,11 @@ void loop() {
       sensorClearStart = millis();
       isPathClear = true;
       setServoAngle(90);
-      Serial.println("[Restore] Set servo về 90 trước khi hồi vị");
-    } else if (millis() - sensorClearStart >= 500) {
+    } else if (millis() - sensorClearStart >= 250) {
       adjustSteeringByYaw(); // Tính PID hồi vị
       int correctedAngle = constrain(90 + yawDirection * yawOutput, 50, 130);
       setServoAngle(correctedAngle);
-      Serial.print("[MPU PID] angleZ: "); Serial.print(angleZ);
-      Serial.print(" | yawOutput: "); Serial.println(yawOutput);
       goAhead(pwmSpeed);
-      return;
     }
   } else {
     // ======= Có vật cản - chỉ PID Siêu âm =======
@@ -329,11 +337,19 @@ void loop() {
 
     int ultrasonicAngle = constrain(90 + output, 50, 130);
     setServoAngle(ultrasonicAngle);
-    Serial.print("[Ultrasonic PID] input: "); Serial.print(input);
-    Serial.print(" | output: "); Serial.print(output);
-    Serial.print(" | ultrasonicAngle: "); Serial.println(ultrasonicAngle);
-
     goAhead(pwmSpeed);
     delay(50);
   }
+
+  // ===== Print liên tục mỗi 100ms =====
+  if (millis() - lastPrintTime >= 100) {
+    Serial.print("Yaw: "); Serial.print(angleZ);
+    Serial.print(" | US0: "); Serial.print(distance[0]);
+    Serial.print(" | US1: "); Serial.print(distance[1]);
+    Serial.print(" | US2: "); Serial.print(distance[2]);
+    Serial.print(" | US3: "); Serial.print(distance[3]);
+    Serial.println();
+    lastPrintTime = millis();
+  }
 }
+
