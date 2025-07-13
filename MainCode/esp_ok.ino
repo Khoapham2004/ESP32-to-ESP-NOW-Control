@@ -19,12 +19,12 @@ int filter_index = 0;
 
 // ======== PID ========
 double input, output, setpoint = 0;
-double Kp = 5.0, Ki = 0.2, Kd = 0.8;
+double Kp = 5.0, Ki = 0.5, Kd = 0.5;
 PID myPID(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
 // ======== Yaw PID ========
 double yawInput, yawOutput, yawSetpoint = 0;
-double yawKp = 3, yawKi = 0.2, yawKd = 0.8;
+double yawKp = 3.0, yawKi = 0.2, yawKd = 0.8;
 PID yawPID(&yawInput, &yawOutput, &yawSetpoint, yawKp, yawKi, yawKd, DIRECT);
 
 // ======== Pins ========
@@ -35,11 +35,13 @@ const int EN_PIN = 2;
 const int LED_F = 23;
 const int LED_TURN_R = 16;
 const int LED_TURN_L = 17;
+int yawDirection = -1; // Đổi -1 hoặc 1 nếu bị ngược
 
-const int trigPins[4] = {19, 4, 27, 5};
-const int echoPins[4] = {21, 26, 25, 18};
-long duration[4];
-float distance[4];
+// Chỉ dùng 2 cảm biến: Trái (LEFT) và Phải (RIGHT)
+const int trigPins[2] = {4, 27};    // LEFT, RIGHT
+const int echoPins[2] = {26, 25};  // LEFT, RIGHT
+long duration[2];
+float distance[2];
 
 const int MotorPWMFreq = 1000;
 const int ServoPWMFreq = 50;
@@ -50,15 +52,6 @@ unsigned long lastRecvTime = 0;
 bool isSensorMode = false;
 
 // ======== Restore Tracking ========
-int previousPIDAngle = 90;
-bool needRestoreAngle = false;
-bool isWaitingForRestore = false;
-bool isRestoring = false;
-unsigned long waitStartTime = 0;
-unsigned long restoreStartTime = 0;
-int restoreAngle = 90;
-int yawDirection = -1; // Đổi -1 hoặc 1 nếu bị ngược
-
 bool isPathClear = false;
 unsigned long sensorClearStart = 0;
 
@@ -75,10 +68,10 @@ DataPacket receiverData;
 void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, int len) {
   if (len == sizeof(DataPacket)) {
     memcpy(&receiverData, incomingData, sizeof(receiverData));
-    if (receiverData.header == 0x4E && receiverData.footer == 0x41) {
+    if (receiverData.header == 0x4A && receiverData.footer == 0x42) {
       if (!isSensorMode) {
         int steering = map(receiverData.rx, 0, 254, 0, 206);
-        int ssteering = constrain(steering, 50, 130);
+        int ssteering = constrain(steering, 60, 130);
         setServoAngle(ssteering);
         controlMotor();
       }
@@ -95,10 +88,9 @@ void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
         delay(200);
       }
 
-      // Khi bật chế độ cảm biến, cập nhật góc yaw = 0
       if (receiverData.b6 && !isSensorMode) {
         isSensorMode = true;
-        angleZ = 0; // reset yaw về 0
+        angleZ = 0;
         Serial.println("Chế độ cảm biến BẬT - Cập nhật angleZ = 0");
         delay(100);
       }
@@ -120,7 +112,7 @@ void setupMPU6050() {
   Wire.begin(33, 32);
   mpu.initialize();
   if (!mpu.testConnection()) {
-    Serial.println("MPU6050 khong ket noi");
+    Serial.println("MPU6050 không kết nối");
     while (1);
   }
   delay(1000);
@@ -147,7 +139,7 @@ void updateYaw() {
   lastMPUTime = now;
   if (dt <= 0 || dt > 1.0) return;
 
-  float rawRateZ = -(gz - gyroZ_offset) / 131.0; // Đảo chiều rateZ
+  float rawRateZ = -(gz - gyroZ_offset) / 131.0;
   rateZ_buffer[filter_index] = rawRateZ;
   filter_index = (filter_index + 1) % FILTER_SIZE;
 
@@ -158,27 +150,17 @@ void updateYaw() {
   angleZ += filteredRateZ * dt;
   angleZ = fmod(angleZ, 360.0);
   if (angleZ < 0) angleZ += 360;
-
 }
 
 void adjustSteeringByYaw() {
   yawInput = angleZ;
   if (yawInput > 180) yawInput -= 360;
   if (yawInput < -180) yawInput += 360;
-
   yawPID.Compute();
 }
 
-float smoothDistance(float current, float previous, float maxChange) {
-  float diff = current - previous;
-  if (fabs(diff) > maxChange) {
-    current = previous + (diff > 0 ? maxChange : -maxChange);
-  }
-  return current;
-}
-
 void readUltrasonicSensors() {
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 2; i++) {
     digitalWrite(trigPins[i], LOW);
     delayMicroseconds(2);
     digitalWrite(trigPins[i], HIGH);
@@ -186,10 +168,10 @@ void readUltrasonicSensors() {
     digitalWrite(trigPins[i], LOW);
 
     long duration = pulseIn(echoPins[i], HIGH, 30000);
-    float rawDistance = (duration == 0) ? -1 : duration * 0.0343 / 2;
-
-    if (rawDistance > 0) {
-      distance[i] = smoothDistance(rawDistance, distance[i], 5); // maxChange = 5 cm
+    if (duration == 0) {
+      distance[i] = -1; // Không đo được
+    } else {
+      distance[i] = duration * 0.0343 / 2; // cm
     }
   }
 }
@@ -222,6 +204,7 @@ void brakeMoter() {
 void setServoAngle(int angle) {
   int duty = map(angle, 0, 180, 1638, 8192);
   ledcWrite(steeringPin, duty);
+
   int steering = map(receiverData.rx, 0, 254, 0, 206);
   if (steering > 100) {
     digitalWrite(LED_TURN_R, HIGH);
@@ -238,10 +221,13 @@ void setServoAngle(int angle) {
 void controlMotor() {
   int motorSpeed = map(receiverData.ly, 0, 254, -255, 255);
   int pwmSpeed = map(receiverData.pot, 0, 254, 0, 255);
+  int steering = map(receiverData.rx , 0, 254, 0, 206);
+  int ssteering = constrain(steering, 50, 140);
   if (motorSpeed > 50) goAhead(pwmSpeed);
-  else if (motorSpeed < -50) goBack(pwmSpeed);
+  else if (motorSpeed < -50) goBack(pwmSpeed > 130 ? pwmSpeed - 30 : pwmSpeed);
   else stopMotor();
 }
+
 
 void setUpPinModes() {
   pinMode(EN_PIN, OUTPUT);
@@ -255,7 +241,7 @@ void setUpPinModes() {
   ledcAttach(LPWM, MotorPWMFreq, PWMResolution);
   ledcAttach(steeringPin, ServoPWMFreq, 16);
   setServoAngle(90);
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 2; i++) {
     pinMode(trigPins[i], OUTPUT);
     pinMode(echoPins[i], INPUT);
   }
@@ -280,8 +266,6 @@ void setup() {
   esp_now_register_recv_cb(OnDataRecv);
 }
 
-unsigned long lastPrintTime = 0;
-
 void loop() {
   if (millis() - lastRecvTime > SIGNAL_TIMEOUT) {
     setServoAngle(90);
@@ -297,8 +281,8 @@ void loop() {
 
   // ===== Kiểm tra vật cản =====
   bool objectDetected = false;
-  for (int i = 0; i < 4; i++) {
-    if (distance[i] > 0 && distance[i] < 30) {
+  for (int i = 0; i < 2; i++) {
+    if (distance[i] > 0 && distance[i] <= 37) {
       objectDetected = true;
       break;
     }
@@ -310,46 +294,27 @@ void loop() {
       sensorClearStart = millis();
       isPathClear = true;
       setServoAngle(90);
-    } else if (millis() - sensorClearStart >= 250) {
-      adjustSteeringByYaw(); // Tính PID hồi vị
-      int correctedAngle = constrain(90 + yawDirection * yawOutput, 50, 130);
+    } else if (millis() - sensorClearStart >= 700) {
+      adjustSteeringByYaw();
+      int correctedAngle = constrain(90 + yawDirection * yawOutput, 50, 140);
       setServoAngle(correctedAngle);
       goAhead(pwmSpeed);
     }
   } else {
-    // ======= Có vật cản - chỉ PID Siêu âm =======
+    // ======= Có vật cản - PID Siêu âm =======
     isPathClear = false;
 
-    float leftSum = 0; int leftCount = 0;
-    if (distance[2] > 0) { leftSum += distance[2]; leftCount++; }
-    if (distance[3] > 0) { leftSum += distance[3]; leftCount++; }
-    float leftAvg = (leftCount > 0) ? leftSum / leftCount : -1;
+    float leftDist = distance[0];
+    float rightDist = distance[1];
 
-    float rightSum = 0; int rightCount = 0;
-    if (distance[0] > 0) { rightSum += distance[0]; rightCount++; }
-    if (distance[1] > 0) { rightSum += distance[1]; rightCount++; }
-    float rightAvg = (rightCount > 0) ? rightSum / rightCount : -1;
+    if (leftDist < 0 || rightDist < 0) return;
 
-    if (leftAvg < 0 || rightAvg < 0) return;
-
-    input = rightAvg - leftAvg;
+    input = rightDist - leftDist; // So sánh phải - trái
     myPID.Compute();
 
-    int ultrasonicAngle = constrain(90 + output, 50, 130);
+    int ultrasonicAngle = constrain(90 + output, 50, 140);
     setServoAngle(ultrasonicAngle);
     goAhead(pwmSpeed);
     delay(50);
   }
-
-  // ===== Print liên tục mỗi 100ms =====
-  if (millis() - lastPrintTime >= 100) {
-    Serial.print("Yaw: "); Serial.print(angleZ);
-    Serial.print(" | US0: "); Serial.print(distance[0]);
-    Serial.print(" | US1: "); Serial.print(distance[1]);
-    Serial.print(" | US2: "); Serial.print(distance[2]);
-    Serial.print(" | US3: "); Serial.print(distance[3]);
-    Serial.println();
-    lastPrintTime = millis();
-  }
 }
-
