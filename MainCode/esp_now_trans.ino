@@ -3,7 +3,7 @@
 #include <esp_wifi.h>
 
 // Địa chỉ MAC của ESP32 nhận dữ liệu (Cập nhật đúng địa chỉ)
-uint8_t receiverMAC[] = {0xEC, 0xE3, 0x34, 0x8A, 0x29, 0xB8};
+uint8_t receiverMAC[] = {0xXX, 0xXX, 0xXX, 0xXX, 0xXX, 0xXX};
 
 // Cấu trúc dữ liệu gửi đi (Thêm header và footer)
 typedef struct {
@@ -29,7 +29,8 @@ void setup() {
 
   // Cấu hình WiFi ở chế độ Station
   WiFi.mode(WIFI_STA);
-
+ // Cố định channel 6
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
   // **Tăng công suất WiFi để giảm nhiễu**
   //esp_wifi_set_max_tx_power(78);  // Giá trị 78 tương đương ~20.5 dBm (mạnh nhất)
   WiFi.setSleep(false);  // Tắt tiết kiệm năng lượng WiFi
@@ -44,7 +45,7 @@ void setup() {
   // Cấu hình peer (thiết bị nhận)
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, receiverMAC, 6);
-  peerInfo.channel = 0;
+  peerInfo.channel = 6;
   peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
@@ -70,7 +71,7 @@ void setup() {
 void loop() {
   // Gán header và footer
   data.header = 0x4E;
-  data.footer = 0x41;
+  data.footer = 0x42;
 
   // Đọc giá trị joystick và biến trở
   data.ly = map(analogRead(35), 0, 4095, 0, 255);
