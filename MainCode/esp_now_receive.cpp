@@ -1,12 +1,15 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <MPU6050.h>
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <ESP32Servo.h>
 #include <PID_v1.h>
 #include <math.h>
 
+#define RPWM_CHANNEL 0
+#define LPWM_CHANNEL 1
+#define SERVO_CHANNEL 2
 // ======== MPU6050 ========
 MPU6050 mpu;
 float angleZ = 0;
@@ -64,49 +67,6 @@ typedef struct {
 } DataPacket;
 
 DataPacket receiverData;
-
-void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, int len) {
-  if (len == sizeof(DataPacket)) {
-    memcpy(&receiverData, incomingData, sizeof(receiverData));
-    if (receiverData.header == 0x4A && receiverData.footer == 0x42) {
-      if (!isSensorMode) {
-        int steering = map(receiverData.rx, 0, 254, 0, 206);
-        int ssteering = constrain(steering, 60, 130);
-        setServoAngle(ssteering);
-        controlMotor();
-      }
-      lastRecvTime = millis();
-
-      if (receiverData.js1) {
-        digitalWrite(LED_F, HIGH);
-        goAhead(255);
-        delay(100);
-      }
-      if (receiverData.js2) {
-        brakeMoter();
-        setServoAngle(90);
-        delay(200);
-      }
-
-      if (receiverData.b6 && !isSensorMode) {
-        isSensorMode = true;
-        angleZ = 0;
-        Serial.println("Chế độ cảm biến BẬT - Cập nhật angleZ = 0");
-        delay(100);
-      }
-
-      if (receiverData.b5 && isSensorMode) {
-        isSensorMode = false;
-        Serial.println("Chế độ cảm biến TẮT");
-        delay(100);
-      }
-
-      if (receiverData.b3) {
-        angleZ = 0;
-      }
-    }
-  }
-}
 
 void setupMPU6050() {
   Wire.begin(33, 32);
@@ -178,22 +138,22 @@ void readUltrasonicSensors() {
 
 void goAhead(int speed) {
   digitalWrite(EN_PIN, HIGH);
-  ledcWrite(RPWM, speed);
-  ledcWrite(LPWM, 0);
+  ledcWrite(RPWM_CHANNEL, speed);
+  ledcWrite(LPWM_CHANNEL, 0);
 }
 
 void goBack(int speed) {
   digitalWrite(EN_PIN, HIGH);
-  ledcWrite(RPWM, 0);
-  ledcWrite(LPWM, speed);
+  ledcWrite(RPWM_CHANNEL, 0);
+  ledcWrite(LPWM_CHANNEL, speed);
 }
 
 void stopMotor() {
-  digitalWrite(LED_F, LOW);
   digitalWrite(EN_PIN, LOW);
-  ledcWrite(RPWM, 0);
-  ledcWrite(LPWM, 0);
+  ledcWrite(RPWM_CHANNEL, 0);
+  ledcWrite(LPWM_CHANNEL, 0);
 }
+
 
 void brakeMoter() {
   digitalWrite(EN_PIN, HIGH);
@@ -203,7 +163,7 @@ void brakeMoter() {
 
 void setServoAngle(int angle) {
   int duty = map(angle, 0, 180, 1638, 8192);
-  ledcWrite(steeringPin, duty);
+  ledcWrite(SERVO_CHANNEL, duty);
 
   int steering = map(receiverData.rx, 0, 254, 0, 206);
   if (steering > 100) {
@@ -228,7 +188,6 @@ void controlMotor() {
   else stopMotor();
 }
 
-
 void setUpPinModes() {
   pinMode(EN_PIN, OUTPUT);
   pinMode(LED_F, OUTPUT);
@@ -237,13 +196,68 @@ void setUpPinModes() {
   pinMode(RPWM, OUTPUT);
   pinMode(LPWM, OUTPUT);
   digitalWrite(LED_F, LOW);
-  ledcAttach(RPWM, MotorPWMFreq, PWMResolution);
-  ledcAttach(LPWM, MotorPWMFreq, PWMResolution);
-  ledcAttach(steeringPin, ServoPWMFreq, 16);
+//   ledcAttach(RPWM, MotorPWMFreq, PWMResolution);
+//   ledcAttach(LPWM, MotorPWMFreq, PWMResolution);
+//   ledcAttach(steeringPin, ServoPWMFreq, 16);
+ // Sử dụng đúng hàm PWM
+   // Thiết lập PWM
+  ledcSetup(RPWM_CHANNEL, MotorPWMFreq, PWMResolution); // Channel 0
+  ledcAttachPin(RPWM, RPWM_CHANNEL);
+
+  ledcSetup(LPWM_CHANNEL, MotorPWMFreq, PWMResolution); // Channel 1
+  ledcAttachPin(LPWM, LPWM_CHANNEL);
+
+  ledcSetup(SERVO_CHANNEL, ServoPWMFreq, 16);            // Channel 2
+  ledcAttachPin(steeringPin, SERVO_CHANNEL);
+
   setServoAngle(90);
+
   for (int i = 0; i < 2; i++) {
     pinMode(trigPins[i], OUTPUT);
     pinMode(echoPins[i], INPUT);
+  }
+}
+
+void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
+  if (len == sizeof(DataPacket)) {
+    memcpy(&receiverData, incomingData, sizeof(receiverData));
+    if (receiverData.header == 0x4A && receiverData.footer == 0x42) {
+      if (!isSensorMode) {
+        int steering = map(receiverData.rx, 0, 254, 0, 206);
+        int ssteering = constrain(steering, 60, 130);
+        setServoAngle(ssteering);
+        controlMotor();
+      }
+      lastRecvTime = millis();
+
+      if (receiverData.js1) {
+        digitalWrite(LED_F, HIGH);
+        goAhead(255);
+        delay(100);
+      }
+      if (receiverData.js2) {
+        brakeMoter();
+        setServoAngle(90);
+        delay(200);
+      }
+
+      if (receiverData.b6 && !isSensorMode) {
+        isSensorMode = true;
+        angleZ = 0;
+        Serial.println("Chế độ cảm biến BẬT - Cập nhật angleZ = 0");
+        delay(100);
+      }
+
+      if (receiverData.b5 && isSensorMode) {
+        isSensorMode = false;
+        Serial.println("Chế độ cảm biến TẮT");
+        delay(100);
+      }
+
+      if (receiverData.b3) {
+        angleZ = 0;
+      }
+    }
   }
 }
 
@@ -255,6 +269,8 @@ void setup() {
   myPID.SetOutputLimits(-40, 40);
 
   WiFi.mode(WIFI_STA);
+    // Cố định channel 6
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
   WiFi.setSleep(false);
   esp_wifi_set_max_tx_power(74);
   setCpuFrequencyMhz(200);
