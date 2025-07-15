@@ -10,4 +10,4 @@ Then Upload code for esp trans.
 NOTE : 
 + if you want to know how it work you can visit file video.mp4 and circuit design in KICAD
 + This project is implemented on PlatformIO in VSCode, and the circuit is designed in KiCAD.
-+ This project also have basic autounomous driving , basing on mpu6050 and ultrasonic sensor control steering system through 2 pid
++ This project also have basic autonomous driving , basing on mpu6050 and ultrasonic sensor control steering system through 2 pid
