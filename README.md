@@ -9,6 +9,7 @@ If you want to learn more details, please watch the video.
   NOTE: 
   + Because when WiFi is enabled, only ADC1 can be used, so I cut the Lx wire from the joystick and re-soldered it to the output pin of the potentiometer on pin 32.(for trans circuit)
   + Due to some confusion, the circuit using the IC555 for the turn signal is not accurate. For the capacitor, a 110uF should be used, and the trigger pins should use TX2 and RX2 on the ESP32 pin 30.(for receiver circuit)
+    
 ![image](https://github.com/user-attachments/assets/0818fe40-f2fa-4d9c-9451-d4ba80c9d39a)
 
 For the pre-built setups, I also integrated an autonomous vehicle with image processing using Python into the project.You can see the results in the video Autodriving-pythone.mp4, which also uses a Raspberry Pi.
