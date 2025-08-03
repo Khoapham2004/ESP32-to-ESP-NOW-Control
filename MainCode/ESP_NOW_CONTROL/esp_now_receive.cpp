@@ -20,11 +20,6 @@ unsigned long lastMPUTime;
 float rateZ_buffer[FILTER_SIZE];
 int filter_index = 0;
 
-// ======== PID ========
-double input, output, setpoint = 0;
-double Kp = 5.0, Ki = 0.5, Kd = 0.5;
-PID myPID(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
-
 // ======== Yaw PID ========
 double yawInput, yawOutput, yawSetpoint = 0;
 double yawKp = 3.0, yawKi = 0.2, yawKd = 0.8;
@@ -120,20 +115,24 @@ void adjustSteeringByYaw() {
 }
 
 void readUltrasonicSensors() {
-  for (int i = 0; i < 2; i++) {
-    digitalWrite(trigPins[i], LOW);
-    delayMicroseconds(2);
-    digitalWrite(trigPins[i], HIGH);
-    delayMicroseconds(10);
-    digitalWrite(trigPins[i], LOW);
+  // LEFT
+digitalWrite(trigPins[0], LOW);
+delayMicroseconds(2);
+digitalWrite(trigPins[0], HIGH);
+delayMicroseconds(10);
+digitalWrite(trigPins[0], LOW);
+long durationL = pulseIn(echoPins[0], HIGH, 30000);
+distance[0] = (durationL == 0) ? -1 : durationL * 0.0343 / 2;
 
-    long duration = pulseIn(echoPins[i], HIGH, 30000);
-    if (duration == 0) {
-      distance[i] = -1; // Không đo được
-    } else {
-      distance[i] = duration * 0.0343 / 2; // cm
-    }
-  }
+// RIGHT
+digitalWrite(trigPins[1], LOW);
+delayMicroseconds(2);
+digitalWrite(trigPins[1], HIGH);
+delayMicroseconds(10);
+digitalWrite(trigPins[1], LOW);
+long durationR = pulseIn(echoPins[1], HIGH, 30000);
+distance[1] = (durationR == 0) ? -1 : durationR * 0.0343 / 2;
+
 }
 
 void goAhead(int speed) {
@@ -265,8 +264,6 @@ void setup() {
   Serial.begin(115200);
   setUpPinModes();
   setupMPU6050();
-  myPID.SetMode(AUTOMATIC);
-  myPID.SetOutputLimits(-40, 40);
 
   WiFi.mode(WIFI_STA);
     // Cố định channel 6
@@ -281,7 +278,7 @@ void setup() {
   esp_now_set_wake_window(65535);
   esp_now_register_recv_cb(OnDataRecv);
 }
-
+/*
 void loop() {
   if (millis() - lastRecvTime > SIGNAL_TIMEOUT) {
     setServoAngle(90);
@@ -293,15 +290,23 @@ void loop() {
 
   updateYaw();
   readUltrasonicSensors();
+  
+  Serial.print("MPU angleZ: ");
+  Serial.print(angleZ);
+  Serial.print(" | LEFT: ");
+  Serial.print(distance[0]);
+  Serial.print(" cm");
+  Serial.print(" | RIGHT: ");
+  Serial.print(distance[1]);
+  Serial.println(" cm");
+
   int pwmSpeed = map(receiverData.pot, 0, 254, 0, 255);
 
   // ===== Kiểm tra vật cản =====
   bool objectDetected = false;
-  for (int i = 0; i < 2; i++) {
-    if (distance[i] > 0 && distance[i] <= 37) {
-      objectDetected = true;
-      break;
-    }
+
+  if ((distance[0] > 0 && distance[0] <= 30) || (distance[1] > 0 && distance[1] <= 30)) {
+    objectDetected = true;
   }
 
   if (!objectDetected) {
@@ -310,27 +315,118 @@ void loop() {
       sensorClearStart = millis();
       isPathClear = true;
       setServoAngle(90);
-    } else if (millis() - sensorClearStart >= 700) {
+    } else if (millis() - sensorClearStart >= 600) {
       adjustSteeringByYaw();
       int correctedAngle = constrain(90 + yawDirection * yawOutput, 50, 140);
       setServoAngle(correctedAngle);
       goAhead(pwmSpeed);
     }
   } else {
-    // ======= Có vật cản - PID Siêu âm =======
+    // ======= Có vật cản - Né đơn giản =======
     isPathClear = false;
 
-    float leftDist = distance[0];
-    float rightDist = distance[1];
+    if (distance[0] > 0 && distance[0] <= 35 && (distance[1] <= 0 || distance[1] > 35)) {
+      // Vật cản bên trái -> quay nhẹ sang phải
+      setServoAngle(130);
+    } else if (distance[1] > 0 && distance[1] <= 35 && (distance[0] <= 0 || distance[0] > 35)) {
+      // Vật cản bên phải -> quay nhẹ sang trái
+      setServoAngle(50);
+    } else {
+      // Vật cản cả 2 bên hoặc lỗi đọc -> giữ thẳng
+      setServoAngle(90);
+    }
 
-    if (leftDist < 0 || rightDist < 0) return;
-
-    input = rightDist - leftDist; // So sánh phải - trái
-    myPID.Compute();
-
-    int ultrasonicAngle = constrain(90 + output, 50, 140);
-    setServoAngle(ultrasonicAngle);
-    goAhead(pwmSpeed);
+    goAhead(pwmSpeed > 150 ? 150 : pwmSpeed); // Giới hạn tốc độ khi né
     delay(50);
+  }
+}
+*/
+void loop() {
+  unsigned long now = millis();
+
+  // ======= Mất tín hiệu từ tay cầm =======
+  if (now - lastRecvTime > SIGNAL_TIMEOUT) {
+    setServoAngle(90);   // Trả lái về giữa
+    stopMotor();         // Dừng động cơ
+    isSensorMode = false; // Tắt chế độ cảm biến để tránh treo
+    return;
+  }
+
+  // ======= Nếu đang chế độ tay =======
+  if (!isSensorMode) return;
+
+  // ======= Chạy chế độ cảm biến =======
+  updateYaw();               // Cập nhật góc Yaw từ MPU6050
+  readUltrasonicSensors();   // Đọc 2 cảm biến siêu âm
+
+  // ======= In debug =======
+  Serial.print("MPU angleZ: ");
+  Serial.print(angleZ);
+  Serial.print(" | LEFT: ");
+  Serial.print(distance[0]);
+  Serial.print(" cm");
+  Serial.print(" | RIGHT: ");
+  Serial.print(distance[1]);
+  Serial.println(" cm");
+
+  int pwmSpeed = map(receiverData.pot, 0, 254, 0, 255);
+
+  // ======= Kiểm tra vật cản =======
+  bool objectDetected = false;
+
+  // Lọc nhiễu: coi giá trị hợp lệ khi >5cm và <200cm
+  bool leftValid = (distance[0] > 1 && distance[0] < 200);
+  bool rightValid = (distance[1] > 1 && distance[1] < 200);
+
+  if ((leftValid && distance[0] <= 34) || (rightValid && distance[1] <= 34)) {
+    objectDetected = true;
+  }
+
+  // ======= Xử lý =======
+  if (!objectDetected) {
+    // ======= Không có vật cản =======
+    if (!isPathClear) {
+      // Chỉ reset khi vừa thoát trạng thái có vật cản
+      sensorClearStart = now;
+      isPathClear = true;
+      setServoAngle(90); // Trả lái thẳng
+      // Tắt xi-nhan
+      digitalWrite(LED_TURN_R, LOW);
+      digitalWrite(LED_TURN_L, LOW);
+    }
+    else if (now - sensorClearStart >= 600) {
+      // Đủ thời gian đường thoáng → hồi vị góc lái bằng PID
+      adjustSteeringByYaw();
+      int correctedAngle = constrain(90 + yawDirection * yawOutput, 50, 140);
+      setServoAngle(correctedAngle);
+      goAhead(pwmSpeed);
+    } else {
+      // Trong 600ms đầu giữ thẳng lái
+      setServoAngle(90);
+      goAhead(pwmSpeed);
+    }
+  } else {
+    // ======= Có vật cản =======
+    isPathClear = false;
+
+    if (leftValid && distance[0] <= 34 && (!rightValid || distance[1] > 34)) {
+      // Vật cản bên trái → xi-nhan phải, quay phải
+      digitalWrite(LED_TURN_R, HIGH);
+      digitalWrite(LED_TURN_L, LOW);
+      setServoAngle(130);
+    } else if (rightValid && distance[1] <= 34 && (!leftValid || distance[0] > 34)) {
+      // Vật cản bên phải → xi-nhan trái, quay trái
+      digitalWrite(LED_TURN_R, LOW);
+      digitalWrite(LED_TURN_L, HIGH);
+      setServoAngle(50);
+    } else {
+      // Vật cản cả 2 bên hoặc lỗi đọc → giữ thẳng
+      digitalWrite(LED_TURN_R, LOW);
+      digitalWrite(LED_TURN_L, LOW);
+      setServoAngle(90);
+    }
+
+    goAhead(pwmSpeed > 150 ? 150 : pwmSpeed); // Giới hạn tốc độ khi né
+    // Không dùng delay để không block loop
   }
 }
