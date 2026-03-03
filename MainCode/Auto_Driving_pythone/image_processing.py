@@ -9,15 +9,15 @@ BAUD_RATE = 115200
 try:
     ser = serial.Serial(UART_PORT, BAUD_RATE, timeout=1)
     time.sleep(2)
-    print("✅ UART đã kết nối.")
+    print(" UART đã kết nối.")
 except serial.SerialException:
-    print("⚠️ Không thể mở cổng UART.")
+    print(" Không thể mở cổng UART.")
     ser = None
 
 # === Camera setup ===
 cam = cv2.VideoCapture(0)
 if not cam.isOpened():
-    print("⚠️ Không thể mở camera.")
+    print(" Không thể mở camera.")
     exit()
 
 # Giảm độ phân giải để xử lý nhanh hơn
@@ -178,14 +178,14 @@ def send_packet():
     ])
     if ser:
         ser.write(packet)
-        print(f"📤 Sent | LY={ly}, RX={rx}, POT={pot}")
+        print(f" Sent | LY={ly}, RX={rx}, POT={pot}")
 
 # === Main loop ===
 try:
     while True:
         ret, frame = cam.read()
         if not ret:
-            print("⚠️ Không đọc được frame.")
+            print(" Không đọc được frame.")
             break
 
         # Tính toán góc lái mới
@@ -204,7 +204,7 @@ try:
         time.sleep(0.1)
 
 except KeyboardInterrupt:
-    print("⛔ Dừng bởi người dùng.")
+    print(" Dừng bởi người dùng.")
 finally:
     if ser:
         ser.close()
